@@ -1,16 +1,19 @@
 import process from 'node:process';
 import readline from 'node:readline';
+import {PassThrough} from 'node:stream';
 import {BufferListStream} from 'bl';
 
 const ASCII_ETX_CODE = 0x03; // Ctrl+C emits this code
 
 export class StdinDiscarder {
 	#requests = 0;
+	#stdinProxy = new PassThrough();
 	#mutedStream = new BufferListStream();
 	#ourEmit;
 	#rl;
 
 	constructor() {
+		process.stdin.pipe(this.#stdinProxy);
 		this.#mutedStream.pipe(process.stdout);
 
 		const self = this; // eslint-disable-line unicorn/no-this-assignment
@@ -60,7 +63,7 @@ export class StdinDiscarder {
 		}
 
 		this.#rl = readline.createInterface({
-			input: process.stdin,
+			input: this.#stdinProxy,
 			output: this.#mutedStream,
 		});
 
@@ -69,6 +72,7 @@ export class StdinDiscarder {
 				process.emit('SIGINT');
 			} else {
 				this.#rl.close();
+				this.#stdinProxy.destroy();
 				process.kill(process.pid, 'SIGINT');
 			}
 		});
@@ -79,17 +83,10 @@ export class StdinDiscarder {
 			return;
 		}
 
-		const {stdin} = process;
-		const wasPaused = stdin.isPaused();
-
 		this.#rl.close();
-
-		// Keep stdin unpaused across the readline close if it is already
-		// unpaused. See #209 for more details.
-		if (!wasPaused && stdin.isPaused()) {
-			stdin.resume();
-		}
-
 		this.#rl = undefined;
+
+		this.#stdinProxy.destroy();
+		this.#stdinProxy = undefined;
 	}
 }
